@@ -138,18 +138,60 @@ async function fetchPanchang(token, datetime) {
   return res.json();
 }
 
-// ─── Format time string (HH:MM) ──────────────────────────────────────────────
+// ─── Format time from ISO string ────────────────────────────────────────────
+// Prokerala returns full ISO timestamps e.g. "2026-07-06T05:51:19+05:30".
+// Extract HH:MM directly from the string to avoid server-timezone drift.
 function fmtTime(isoStr) {
   if (!isoStr) return '—';
-  const d = new Date(isoStr);
-  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const match = isoStr.match(/T(\d{2}):(\d{2})/);
+  if (!match) return '—';
+  let h = parseInt(match[1], 10);
+  const m = match[2];
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
 }
 
-// ─── Build Tamil year (Kali Yuga based) ─────────────────────────────────────
-function tamilYear(gregorianYear) {
-  // Tamil year starts mid-April; approximate
-  return gregorianYear + 5100;
+// ─── Calculate Tamil calendar date from Gregorian (IST date) ────────────────
+// Fixed solar month start dates (approximate, accurate within 1 day).
+const TAMIL_MONTH_STARTS = [
+  { m: 4,  d: 14 }, { m: 5,  d: 15 }, { m: 6,  d: 15 }, { m: 7,  d: 16 },
+  { m: 8,  d: 16 }, { m: 9,  d: 17 }, { m: 10, d: 17 }, { m: 11, d: 16 },
+  { m: 12, d: 16 }, { m: 1,  d: 14 }, { m: 2,  d: 13 }, { m: 3,  d: 14 },
+];
+
+function getTamilDate(istDate) {
+  const gMonth = istDate.getMonth() + 1;
+  const gDay   = istDate.getDate();
+  const gYear  = istDate.getFullYear();
+
+  let tIdx = 0;
+  for (let i = 0; i < 12; i++) {
+    const cur  = TAMIL_MONTH_STARTS[i];
+    const next = TAMIL_MONTH_STARTS[(i + 1) % 12];
+    const afterStart = (gMonth > cur.m)  || (gMonth === cur.m  && gDay >= cur.d);
+    const beforeNext = (gMonth < next.m) || (gMonth === next.m && gDay <  next.d);
+    const wraps = cur.m > next.m;
+    if (wraps) {
+      if (afterStart || beforeNext) { tIdx = i; break; }
+    } else {
+      if (afterStart && beforeNext) { tIdx = i; break; }
+    }
+  }
+
+  const { m: sm, d: sd } = TAMIL_MONTH_STARTS[tIdx];
+  let startYear = gYear;
+  if (sm > gMonth) startYear = gYear - 1;
+  const startDate = new Date(startYear, sm - 1, sd);
+  const tDay = Math.floor((istDate - startDate) / 86400000) + 1;
+
+  const kaliYear = (gMonth > 4 || (gMonth === 4 && gDay >= 14))
+    ? gYear + 5100
+    : gYear + 5099;
+
+  return { tDay, tIdx, kaliYear };
 }
+
 
 // ─── Main data builder ───────────────────────────────────────────────────────
 async function buildCalendarData() {
@@ -167,70 +209,65 @@ async function buildCalendarData() {
   const raw     = await fetchPanchang(token, datetimeISO);
   const d       = raw.data;
 
-  // ── Gregorian / weekday ──
-  const wdIdx        = now.getDay();
-  const weekday_en   = WEEKDAYS_EN[wdIdx];
-  const weekday_ta   = WEEKDAYS_TA[wdIdx];
+  // ── Gregorian / weekday (use IST date) ──
+  const wdIdx      = ist.getDay();
+  const weekday_en = WEEKDAYS_EN[wdIdx];
+  const weekday_ta = WEEKDAYS_TA[wdIdx];
 
-  // ── Tamil date ──
-  const tMonth     = d.tamil_month   || {};
-  const tDay       = d.tamil_day     || '—';
-  const tYear      = d.tamil_year    || tamilYear(ist.getFullYear());
-
-  // Resolve month index: try alias map first (handles variant spellings like
-  // 'Karthika' vs 'Karthigai'), then fall back to the id field from the API.
-  const apiMonthName  = (tMonth.name || '').trim();
-  const aliasIdx      = MONTH_ALIASES[apiMonthName.toLowerCase()];
-  const tMonthIdx     = aliasIdx !== undefined ? aliasIdx : (tMonth.id || 1) - 1;
-
-  // API returns English names; Tamil script comes from local lookup tables
-  const tamil_month_en  = TAMIL_MONTHS_EN[tMonthIdx] || apiMonthName || '—';
-  const tamil_month_ta  = TAMIL_MONTHS_TA[tMonthIdx] || tamil_month_en;
+  // ── Tamil date (calculated from IST date) ──
+  // The advanced panchang endpoint does not return tamil_day/tamil_month fields,
+  // so we derive them from the Gregorian date using fixed solar month start dates.
+  const { tDay, tIdx, kaliYear } = getTamilDate(ist);
+  const tamil_day      = tDay;
+  const tamil_month_en = TAMIL_MONTHS_EN[tIdx];
+  const tamil_month_ta = TAMIL_MONTHS_TA[tIdx];
+  const tamil_year     = kaliYear;
 
   // ── Tithi ──
-  const tithiArr   = d.tithi || [];
-  const tithi0     = tithiArr[0] || {};
-  // API returns English name; look up Tamil equivalent from hardcoded map
-  const tithi_en   = tithi0.name   || '—';
-  const tithi_ta   = TITHI_TA[tithi_en] || tithi_en;
-  const tithi_end  = fmtTime(tithi0.ends_at);
+  // API field is "end" (not "ends_at")
+  const tithiArr = d.tithi || [];
+  const tithi0   = tithiArr[0] || {};
+  const tithi_en = tithi0.name || '—';
+  const tithi_ta = TITHI_TA[tithi_en] || tithi_en;
+  const tithi_end = fmtTime(tithi0.end);
 
   // ── Nakshatra ──
-  const nakArr     = d.nakshatra || [];
-  const nak0       = nakArr[0] || {};
-  const nak_en     = nak0.name   || '—';
-  const nak_ta     = NAK_TA[nak_en] || nak_en;
-  const nak_end    = fmtTime(nak0.ends_at);
+  const nakArr = d.nakshatra || [];
+  const nak0   = nakArr[0] || {};
+  const nak_en = nak0.name || '—';
+  const nak_ta = NAK_TA[nak_en] || nak_en;
+  const nak_end = fmtTime(nak0.end);
 
-  // ── Sunrise / Sunset ──
-  const sunrise    = fmtTime(d.sunrise);
-  const sunset     = fmtTime(d.sunset);
+  // ── Sunrise / Sunset (ISO timestamps from API) ──
+  const sunrise = fmtTime(d.sunrise);
+  const sunset  = fmtTime(d.sunset);
 
-  // ── Rahu Kalam ──
-  const rahukalam  = d.rahu_kalam || {};
-  const rahu_start = fmtTime(rahukalam.start);
-  const rahu_end   = fmtTime(rahukalam.end);
+  // ── Rahu Kalam & Yamagandam ──
+  // API returns these inside inauspicious_period array, not as top-level fields.
+  const inauspicious = d.inauspicious_period || [];
+  const rahuEntry  = inauspicious.find(p => p.name === 'Rahu')       || {};
+  const yamaEntry  = inauspicious.find(p => p.name === 'Yamaganda')  || {};
+  const rahuPeriod = (rahuEntry.period  || [])[0] || {};
+  const yamaPeriod = (yamaEntry.period  || [])[0] || {};
+  const rahu_start = fmtTime(rahuPeriod.start);
+  const rahu_end   = fmtTime(rahuPeriod.end);
+  const yama_start = fmtTime(yamaPeriod.start);
+  const yama_end   = fmtTime(yamaPeriod.end);
 
-  // ── Emi Kalam / Yamagandam ──
-  const yamagandam = d.yamagandam || {};
-  const yama_start = fmtTime(yamagandam.start);
-  const yama_end   = fmtTime(yamagandam.end);
-
-  // ── Festivals ──
-  const festivals  = (d.auspicious_period || [])
+  // ── Auspicious periods (festivals / muhurats) ──
+  const festivals = (d.auspicious_period || [])
     .filter(f => f.name)
-    .map(f => ({ name_en: f.name, name_ta: f.name })) // English API; no Tamil translation needed here
+    .map(f => ({ name_en: f.name, name_ta: f.name }))
     .slice(0, 3);
-
   const festival_today = festivals.length > 0
     ? festivals.map(f => f.name_en).join(' • ')
     : null;
 
   // ── Yoga ──
-  const yogaArr   = d.yoga || [];
-  const yoga0     = yogaArr[0] || {};
-  const yoga_en   = yoga0.name   || '—';
-  const yoga_ta   = YOGA_TA[yoga_en] || yoga_en;
+  const yogaArr = d.yoga || [];
+  const yoga0   = yogaArr[0] || {};
+  const yoga_en = yoga0.name || '—';
+  const yoga_ta = YOGA_TA[yoga_en] || yoga_en;
 
   const result = {
     // Gregorian
