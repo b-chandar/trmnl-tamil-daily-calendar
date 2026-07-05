@@ -272,6 +272,7 @@ async function buildCalendarData() {
   const result = {
     // Gregorian
     gregorian_date: ist.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+    dd_mm_yyyy: `${String(ist.getDate()).padStart(2,'0')}-${String(ist.getMonth()+1).padStart(2,'0')}-${ist.getFullYear()}`,
     weekday_en,
     weekday_ta,
 
