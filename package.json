@@ -1,0 +1,18 @@
+{
+  "name": "tamil-calendar-trmnl",
+  "version": "1.0.0",
+  "description": "Tamil Daily Sheet Calendar — TRMNL Plugin Server",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-cache": "^5.1.2",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
