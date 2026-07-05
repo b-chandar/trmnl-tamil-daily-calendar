@@ -279,7 +279,7 @@ async function buildCalendarData() {
     tamil_day:       tDay,
     tamil_month_ta,
     tamil_month_en,
-    tamil_year:      tYear,
+    tamil_year:      tamil_year,
 
     // Tithi
     tithi_ta,
