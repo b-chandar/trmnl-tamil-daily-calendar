@@ -296,6 +296,21 @@ app.get('/data', async (req, res) => {
 
 app.get('/health', (_, res) => res.json({ ok: true }));
 
+// Temporary debug route — remove after field mapping is confirmed
+app.get('/raw', async (req, res) => {
+  try {
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const ist = new Date(now.getTime() + istOffset);
+    const datetimeISO = ist.toISOString().replace('Z', '+05:30');
+    const token = await getAccessToken();
+    const raw = await fetchPanchang(token, datetimeISO);
+    res.json(raw);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Tamil Calendar server running on port ${PORT}`);
 });
